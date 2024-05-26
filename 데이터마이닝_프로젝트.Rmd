@@ -1,0 +1,484 @@
+---
+title: "Data_mining_project_2023"
+author: "201900284 강민경, 201903632 최인주"
+date: "2023-12-24"
+output: 
+  html_document:
+    toc : true
+    toc_float: true
+---
+
+
+## 0. packages
+```{r}
+library(tidyverse) # for tidy data analysis
+library(readr)     # for fast reading of input files
+library(caret)     # for convenient splitting
+library(mice)      # mice package for Multivariate Imputation by Chained Equations (MICE)
+library(rsample)   # for splitting training and test data
+library(recipes)   # for preprocessing
+library(yardstick) # for evaluation
+library(ggthemes)  # for additional plotting themes
+library(rpart)     # for decision tree
+library(partykit)  # for visualization of tree model
+library(gridExtra)
+library(corrplot)
+library(ggpubr)
+library(patchwork)
+library(h2o)
+library(randomForest)
+library(caret)
+```
+
+
+
+
+## 1. Data EDA
+
+
+
+### 1.1 data load
+```{r}
+data <- read.csv("Sleep_health_and_lifestyle_dataset.csv")
+```
+
+
+```{r}
+str(data)
+```
++ Person ID: 개인 고유번호 
++ Gender : 성별
++ Age : 나이
++ Occupation : 직업
++ Sleep Duration (hours) : 하루 수면 시간
++ Quality of Sleep (scale : 1-10) : 수면의 질
++ Physical Activity Level : 신체적 활동 시간
++ Stress Level : 스트레스 수치
++ BMI Category : BMI 범주 
++ Blood Pressure : 혈압
++ Heart Rate(bpm): 심박수
+
+
+
+### 1.2 Data preprocessing
++ Blood.Pressure변수가 높은 혈압, 낮은 혈압 붙어있어, high pressure 과 low pressure 로 분리하고, y.Stress 반응변수 추가
+```{r}
+new_data <- data
+Blood_sep <- strsplit(as.character(new_data$Blood.Pressure), "/")
+
+# 분리된 결과를 각각의 변수에 저장
+new_data$High.Pressure <- sapply(Blood_sep, `[`, 1)
+new_data$Low.Pressure <- sapply(Blood_sep, `[`, 2)
+
+new_data$Gender <- factor(new_data$Gender)
+new_data$High.Pressure <- as.integer(new_data$High.Pressure)
+new_data$Low.Pressure <- as.integer(new_data$Low.Pressure)
+new_data$Occupation  <- as.factor(new_data$Occupation)
+new_data$BMI.Category <- factor(new_data$BMI.Category, levels = c("Normal", "Normal Weight", "Overweight", "Obese"))
+new_data$Sleep.Disorder <- as.factor(new_data$Sleep.Disorder)
+new_data$y.Stress <- ifelse(new_data$Stress.Level >= 3 & new_data$Stress.Level <= 5, "Low",
+                            ifelse(new_data$Stress.Level >= 6 & new_data$Stress.Level <= 8, "High",NA))
+new_data$y.Stress <- as.factor(new_data$y.Stress)
+
+new_data <- new_data %>% select(-"Blood.Pressure",-"Person.ID",-"Stress.Level")
+
+str(new_data)
+```
+
+
+```{r}
+summary(new_data)
+```
+
+
+
+## 2. EDA
+
+
+
+### 2.1 Numeric data EDA
+
+```{r}
+par(mfrow=c(2,4))
+boxplot(new_data$Age, col = "lightblue", xlab="Age")
+boxplot(new_data$Sleep.Duration, col = "lightblue", xlab="Sleep.Duration")
+boxplot(new_data$Quality.of.Sleep, col = "lightblue", xlab="Quality.of.Sleep")
+boxplot(new_data$Physical.Activity.Level, col = "lightblue", xlab="Physical.Activity.Level")
+boxplot(new_data$Heart.Rate, col = "lightblue", xlab="Heart.Rate")
+boxplot(new_data$Daily.Steps, col = "lightblue", xlab="Daily.Steps")
+boxplot(new_data$High.Pressure, col = "lightblue", xlab="High.Pressure")
+boxplot(new_data$Low.Pressure, col = "lightblue", xlab="Low.Pressure")
+
+```
+ 
+ + Heart.Rate 에서 이상치가 존재 하지만, 
+     + 전체적인 데이터 수 374개 대비 이상치가 6개로 아주 적은 숫자이며
+     + 변수가 의미하는 심박수는 일반적인 성인 기준 분당 60-100회이므로 이상치로 판단하기 어렵습니다. 
+ + 이상치 제거는 진행하지 않겠습니다. 
+*평균심박수 참조.
+https://ko.wikipedia.org/wiki/%EC%8B%AC%EB%B0%95%EC%88%98
+
+
+
+```{r}
+plot1 <- ggplot(data = new_data, aes(x = Age, fill = y.Stress, color = y.Stress)) + geom_density(alpha = 0.6) + theme_minimal()
+plot2 <- ggplot(data = new_data, aes(x = Sleep.Duration, fill = y.Stress, color = y.Stress)) + geom_density(alpha = 0.6) + theme_minimal()
+plot3 <- ggplot(data = new_data, aes(x = Heart.Rate, fill = y.Stress, color = y.Stress)) + geom_density(alpha = 0.6) + theme_minimal()
+plot4 <- ggplot(data = new_data, aes(x = Physical.Activity.Level, fill = y.Stress, color = y.Stress)) + geom_density(alpha = 0.6) + theme_minimal()
+plot5 <- ggplot(data = new_data, aes(x = Daily.Steps, fill = y.Stress, color = y.Stress)) + geom_density(alpha = 0.6) + theme_minimal()
+plot6 <- ggplot(data = new_data, aes(x = High.Pressure, fill = y.Stress, color = y.Stress)) + geom_density(alpha = 0.6) + theme_minimal()
+plot7 <- ggplot(data = new_data, aes(x = Low.Pressure, fill = y.Stress, color = y.Stress)) + geom_density(alpha = 0.6) + theme_minimal()
+plot8 <- ggplot(data = new_data, aes(x = Quality.of.Sleep, fill = y.Stress, color = y.Stress)) + geom_bar(alpha = 0.6) + theme_minimal()
+grid.arrange(plot1, plot2, plot3, plot4, plot5, plot6, plot7,plot8, ncol = 2)
+
+```
+
+ + Quality.of.Sleep 는 이산형 변수이므로, bar plot형태로 시각화하였습니다.
+ + Sleep.Duration, Quality.of.Sleep : 수면과 관련된 변수들의 경우, 값이 작을수록 y.Stress(스트레스 지수)가 높은 경우가 많고, 값이 클수록 y.Stress(스트레스 지수)가 낮은 경우가 많습니다.
+ + 따라서 스트레스 지수와 잠과 큰 연관이 있을 것으로 예상됩니다.
+ + Heart.Rate(심박수)의 경우 값 70을 경계로 y.Stress(스트레스 지수)의 분포가 변화하는데 전 연령의 평균 이상으로 건강한 심박수 66~69가 반영된 결과로 보입니다.
+ 참고. https://ko.wikipedia.org/wiki/%EC%8B%AC%EB%B0%95%EC%88%98
+ + 다른 수치형 변수들도 y.Stress(스트레스 지수)에 따라 대체적으로 다른 분포를 보이고 있으나, 가장 큰 영향을 줄 것으로 보이는 변수는 Sleep.Duration, Quality.of.Sleep, Heart.Rate일 것으로 판단됩니다. 
+ 
+
+
+### 2.2 Categorical Data EDA
+ 
+```{r}
+new_data %>%
+  select_if(is.factor) %>%
+  gather(variable_name, value_name, -y.Stress) %>%
+  ggplot(aes(x = value_name, fill = y.Stress, color = y.Stress)) +
+  facet_wrap(~ variable_name, ncol = 2, scales = "free") +
+  geom_bar(alpha = 0.7, position = "stack") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,size = 6),
+        legend.position = "top",axis.title.x = element_blank()) 
+
+new_data <- new_data %>%
+  mutate(BMI.Category = factor(case_when(
+    BMI.Category == "Normal Weight" ~ "Normal",
+    BMI.Category == "Obese" ~ "Overweight",
+    TRUE ~ as.character(BMI.Category) 
+  )))
+
+new_data %>%
+  select_if(is.factor) %>%
+  gather(variable_name, value_name, -y.Stress) %>%
+  ggplot(aes(x = value_name, fill = y.Stress, color = y.Stress)) +
+  facet_wrap(~ variable_name, ncol = 2, scales = "free") +
+  geom_bar(alpha = 0.7, position = "stack") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,size = 6),
+        legend.position = "top",axis.title.x = element_blank()) 
+
+```
+  
+  + BMI Category 변수의 경우 4개의 범주로 구성되어 있는데 Normal Weight, Obese 범주의 데이터 수가 확연하게 작기 때문에
+  Normal Weight -> Normal, Obese -> Overweight로 2개의 범주로 BMI Category 변수 전처리를 진행하였습니다. 
+  + 여자보다 남자가 스트레스 지수가 높은 경우가 많습니다. 이는 정말로 성별이 스트레스 지수에 영향이 있을수도 있으냐, 성별에 따라 특정 직업군의 쏠림으로 인한 영향일수도 있어 성별 별 직업 분포를 확인해보겠습니다.
+  
+  
+
+```{r}
+occupation_gen <- new_data %>% select(Occupation, Gender) %>% group_by(Gender, Occupation) %>% summarise(count = n())
+
+p1 <- ggplot(occupation_gen, aes(x = Occupation, y = count, fill = Gender)) +
+  geom_bar(stat = "identity", position = "stack",alpha = 0.73) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Occupation Distribution by Gender", x = "Occupation", y = "Count", fill = "Gender") +
+  theme_minimal() +theme(legend.key.size = unit(4, "mm")) + theme(axis.text.x = element_text(angle = 45, hjust = 1,size=7)) 
+
+p2 <- ggplot(data = new_data) + geom_bar(mapping = aes(x=Gender, fill = Occupation), position = "fill", alpha =0.73) + coord_flip() + scale_fill_brewer(palette = 'Spectral') + theme_minimal() + theme(legend.key.size = unit(3.5, "mm"))
+
+p1 / p2
+```
+
+ + Gender가 y.Stress 즉 스트레스(High,Low) 의 정도에 영향을 줄 것이라고 가정 했을 때, Lawyer의 경우 남자임에도 불구하고 y.Stress가 낮음(Low)로 나타납니다. Nurse의 경우에도 대부분 여성인데 y.Stress가 높음(High)을 나타냅니다. 따라서 Occupation 변수가 y.Stress 에 더 직접적인 영향을 줄 것 이라 생각됩니다.
+
+
+
+## 3. trainging set, Validation set 나누기
+### 3.1 데이터 분할
+
+```{r}
+set.seed(123)  
+
+train_set <- new_data
+train_idx <- sample(nrow(new_data), 0.7*nrow(new_data), replace=F)
+train <- train_set[train_idx,]
+validation <- train_set[-train_idx,]
+```
+
+
+### 3.2 표준화 set 생성
+```{r}
+scaled_train <- preProcess(train, method = c("center", "scale"))
+scaled_validation <- preProcess(validation, method = c("center", "scale"))
+scaled_train <- predict(scaled_train, train)
+scaled_validation <- predict(scaled_validation, validation)
+```
+
+ 
+### H2O 
+```{r}
+h2o.init(nthreads = -1)
+h2o.no_progress()
+```
+ 
+
+
+### H2o에 Data load
+```{r}
+train.hex <- as.h2o(train, destination_frame = "train.hex")
+validation.hex <- as.h2o(validation, destination_frame = "vaildation.hex")
+scaled_train.hex <- as.h2o(scaled_train, destination_frame = "scaled_train.hex")
+scaled_validation.hex <- as.h2o(scaled_validation, destination_frame = "scaled_validation.hex")
+```
+
+
+
+### 3.3 반응변수 종속변수 지정
+```{r}
+response_column <- "y.Stress"
+predictors <- setdiff(names(train.hex), response_column)
+```
+
+
+
+## 4. Modeling
+
+
+
+### 4.1 Random Foreset
+```{r}
+rf_model <- h2o.randomForest(x = predictors, y = response_column, training_frame = train.hex, seed=12345)
+rf_perf <- h2o.performance(rf_model, validation.hex)
+rf_perf
+```
+
+
+```{r}
+perf <- h2o.performance(rf_model, validation.hex)
+
+mse <- perf@metrics$MSE
+rmse <- perf@metrics$RMSE
+logloss <- perf@metrics$logloss
+mean_per_class_error <- perf@metrics$mean_per_class_error
+AUC <- perf@metrics$AUC
+Gini <- perf@metrics$Gini
+
+output <- data.frame(mse, rmse, logloss, mean_per_class_error, AUC, Gini) %>% tidyr::gather("metric", "value")
+
+ggplot(output, aes(metric, value, fill = metric)) + 
+  geom_bar(stat = "identity", color = "black", alpha = 0.5) 
+```
+
+```{r}
+plot(perf, colorize = TRUE)
+```
+
+
+
+
+### 4.2 Logistic Regression
+```{r}
+glm_model <- h2o.glm(x = predictors, y = response_column, training_frame = scaled_train.hex, seed=12345)
+glm_perf <- h2o.performance(glm_model, scaled_validation.hex)
+glm_perf
+```
+
+
+```{r}
+perf <- h2o.performance(glm_model, scaled_validation.hex)
+
+mse <- perf@metrics$MSE
+rmse <- perf@metrics$RMSE
+logloss <- perf@metrics$logloss
+mean_per_class_error <- perf@metrics$mean_per_class_error
+AUC <- perf@metrics$AUC
+Gini <- perf@metrics$Gini
+
+output <- data.frame(mse, rmse, logloss, mean_per_class_error, AUC, Gini) %>% tidyr::gather("metric", "value")
+
+ggplot(output, aes(metric, value, fill = metric)) + 
+  geom_bar(stat = "identity", color = "black", alpha = 0.5) 
+```
+
+```{r}
+plot(perf, colorize = TRUE)
+```
+
+### 4.3 GBM
+```{r}
+gbm_model <- h2o.gbm(x = predictors, y = response_column, training_frame = train.hex, seed=12345)
+gbm_perf <-h2o.performance(gbm_model, validation.hex)
+gbm_perf
+```
+
+```{r}
+perf <- h2o.performance(gbm_model, validation.hex)
+
+mse <- perf@metrics$MSE
+rmse <- perf@metrics$RMSE
+logloss <- perf@metrics$logloss
+mean_per_class_error <- perf@metrics$mean_per_class_error
+AUC <- perf@metrics$AUC
+Gini <- perf@metrics$Gini
+
+output <- data.frame(mse, rmse, logloss, mean_per_class_error, AUC, Gini) %>% tidyr::gather("metric", "value")
+
+ggplot(output, aes(metric, value, fill = metric)) + 
+  geom_bar(stat = "identity", color = "black", alpha = 0.5) 
+```
+
+```{r}
+plot(perf, colorize = TRUE)
+```
+
+
+
+### 4.4 Deep learning
+
+```{r}
+deeplearning_model <- h2o.deeplearning(x = predictors, y = response_column, training_frame = train.hex, seed=12345)
+deep_perf<- h2o.performance(deeplearning_model, validation.hex)
+deep_perf
+```
+
+```{r}
+perf <- h2o.performance(deeplearning_model, validation.hex)
+
+mse <- perf@metrics$MSE
+rmse <- perf@metrics$RMSE
+logloss <- perf@metrics$logloss
+mean_per_class_error <- perf@metrics$mean_per_class_error
+AUC <- perf@metrics$AUC
+Gini <- perf@metrics$Gini
+
+output <- data.frame(mse, rmse, logloss, mean_per_class_error, AUC, Gini) %>% tidyr::gather("metric", "value")
+
+ggplot(output, aes(metric, value, fill = metric)) + 
+  geom_bar(stat = "identity", color = "black", alpha = 0.5) 
+```
+
+```{r}
+plot(perf, colorize = TRUE)
+```
+
+
+
+### 4.5 모델 별 비교 
+
+
+4가지 모델 별 performance를 서로의 단점을 보완해줄 수 있는 3가지 평가 지표 F1 score, Accuracy, AUC을 확인해보면 다음과 같습니다. 
+
+
+```{r echo=FALSE, out.width="60%"}
+knitr::include_graphics("perform.png",error = FALSE)
+```
+
+
+F1 score를 기준으로 보면, Random Forest, GBM이 가장 좋은 성능을 보이고, Accuracy를 기준으로 보면 Random Forest, GBM이 가장 좋은 성능을 가지며 마지막으로 AUC로는 Random Forest가 가장 좋은 성능을 가진다고 할 수 있습니다. 따라서 종합적으로 Random Forest가 가장 우수한 모형이라고 판단됩니다. 하지만 모형별 성능의 차이가 아주 근소하기에 모형 별 변수 중요도를 확인하여 종합적으로 스코어링을 위한 로지스틱 회귀모형의 변수 선택을 하도록 하겠습니다. 
+
+
+
+- 모델링 별 importance of variable 확인
+```{r}
+h2o.varimp_plot(rf_model)
+h2o.varimp_plot(glm_model)
+h2o.varimp_plot(gbm_model)
+h2o.varimp_plot(deeplearning_model)
+```
+
+
+- 모든 모형들의 변수 중요도를 분석해보면, 공통적으로 Quality.of.Sleep, Heart.Rate, Sleep.Duration, Age, Occupation 변수들이 상위에 랭킹되어 있는 것을 확인할 수 있습니다. 이 변수들을 기반으로 로지스틱 기반 평점표를 만들어보겠습니다. 
+
+
+
+## 5. 로직스틱 기반 평점표 만들기
+
+
+### 5.1 더미변수화
+
+- 범주화
+     - Quality.of.Sleep : 6이하, 7, 7초과
+     - Heart.Rate : 67이하, 68이상 72이하, 72 초과
+     - Sleep.Duration : 6.5시간 미만, 6.5시간 이상 ~ 8시간 미만, 8시간 이상
+     - Age : (20,30대),40대,50대
+     - Occupation : 유일하게 범주형 변수로 따로 더미변수화를 진행하지 않았습니다. 
+     
+- 이유: 
+     - Quality.of.Sleep : 2.1 에서 밀도그래프로 시각화한 부분을 참고하여 6 이하인 경우 모두 높은 스트레스 지수를 보이고 7인 경우 높은 경우와 낮은 경우가 반반이었으며 8 이상인 경우 거의 대부분 낮은 스트레스 지수를 보인 점을 고려하여 더미변수화를 진행하였습니다. 
+
+     - Heart.Rate : 2.1 에서 밀도그래프로 시각화한 부분을 참고하여 67 이하인 경우 모두 낮은 스트레스 지, 72 초과인 경우 높은 스트레스 지수, 그 사이에서는 낮고 높은 스트레스 지수가 반반 나타나는 점을 고려하여 더미변수화를 진행하였습니다. 
+
+     - Sleep.Duration : https://www.sleepmed.or.kr/content/info/sleeptime.html 대한수면학회의 적정 수면시간과 수면 사이클이 90분의 배수로 진행된다는 점을 참고하여 6시간 30분 ~ 8시간 정도가 적정 수면시간이라 생각하여 나눴습니다.
+
+     - Age : 1.2에서 데이터 summary를 보았을 때 20대는 최소가 27세 이고 20대 데이터 수도 적어 30대로 추가해서 20,30대를 묶고, 나머지는 40대,50대로 나눴습니다. (27세가 최소값, 59세가 최대값)
+
+     - Occupation : 유일하게 범주형 변수로 따로 더미변수화를 진행하지 않았습니다. 
+
+
+```{r}
+new_data.Quality.of.Sleep <- new_data$Quality.of.Sleep
+Quality.of.Sleep.under6 <- (new_data.Quality.of.Sleep <= 6 )*1
+Quality.of.Sleep7 <- (new_data.Quality.of.Sleep == 7)*1
+
+Quality.of.Sleep.dummy <- cbind(Quality.of.Sleep.under6 , Quality.of.Sleep7)
+head(Quality.of.Sleep.dummy)
+
+new_data.Heart.Rate <- new_data$Heart.Rate
+Heart.Rate.under67 <- (new_data.Heart.Rate <= 67 ) *1
+Heart.Rate.over72 <- (new_data.Heart.Rate > 72 ) *1
+
+Heart.Rate.dummy <- cbind(Heart.Rate.under67 , Heart.Rate.over72)
+head(Heart.Rate.dummy)
+
+new_data.Sleep.Duration <- new_data$Sleep.Duration
+Sleep.Duration.under6.5 <- (new_data.Sleep.Duration < 6.5 )*1
+Sleep.Duration.over8 <- (new_data.Sleep.Duration >= 8 )*1
+
+Sleep.Duration.dummy <- cbind(Sleep.Duration.under6.5 , Sleep.Duration.over8)
+head(Sleep.Duration.dummy)
+
+new_data.Age <- new_data$Age
+Age.20s.30s <- (new_data.Age <= 39 ) *1
+Age.50s <- ( new_data.Age >= 50 ) *1
+
+Age.dummy <- cbind(Age.20s.30s, Age.50s)
+head(Age.dummy)
+
+new_data.cp <- cbind(new_data,Quality.of.Sleep.dummy,Heart.Rate.dummy,Sleep.Duration.dummy,Age.dummy)
+```
+
+
+### 5.2 scorig을 위한 logistic regression
+
+```{r}
+logit.new_data.cp <- glm(y.Stress ~ Quality.of.Sleep.under6 + Quality.of.Sleep7 + Heart.Rate.under67 + Heart.Rate.over72 + Sleep.Duration.under6.5 + Sleep.Duration.over8 + Age.20s.30s + Age.50s + Occupation, data = new_data.cp[train_idx,], family=binomial())
+logit.new_data.cp
+```
+
+```{r}
+new_data.val <- predict(logit.new_data.cp, newdata=new_data.cp[-train_idx, ])
+new_data.val[1:10]
+```
+
+```{r}
+score.val <- data.frame(log.odds=new_data.val, High.Low=new_data.cp[-train_idx, "y.Stress"])
+score.val[1:10,]
+```
+
+
+### 5.3 scorecard (평점표)
+
+
+```{r echo=FALSE, out.width="60%"}
+knitr::include_graphics("scorecard.png",error = FALSE)
+```
+
+
+## 6. Conclusion
+최종적으로 스트레스 정도를 판단할 수 있는 간단한 scoring 모형을 생성하였습니다. 
+여러 모델들의 변수 중요도로 따졌을 때, 공통적으로 Quality.of.Sleep, Heart.Rate, Sleep.Duration, Age, Occupation 변수들이 중요도가 높아 위 변수를 기반으로 평점표를 만들었고, 총 score가 양수면 스트레스 지수가 낮고, 음수면 스트레스 지수가 높다는 것을 확인할 수 있습니다.
+그 중에서도 수면의 질이 7 이하인 경우 스트레스 지수가 높고, 다른 변수들 보다도 범주 간의 score 값 차이가 극심한 것으로 보아 높은 스트레스에 가장 큰 영향을 준다고 판단할 수 있습니다. 
+스트레스 수치 검사를 위해서 위 모델을 토대로 본인의 스트레스를 측정하여, 검사 결과 높은 스트레스 환자들의 경우 생활 습관 중 수면의 질 향상을 통해 스트레스 정도를 개선하는데 유용할 것입니다.
